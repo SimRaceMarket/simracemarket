@@ -1,0 +1,50 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps & build (if any)
+        run: |
+          npm ci
+          if jq -re '.scripts.build' package.json >/dev/null 2>&1; then
+            npm run build
+          fi
+
+      - name: Rsync files to server
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -az --delete --exclude=".git" --exclude=".github" --exclude="node_modules"
+          path: ./
+          remote_path: /opt/discord-bot/
+          remote_host: ${{ secrets.SSH_HOST }}
+          remote_user: ${{ secrets.SSH_USER }}
+          remote_key: ${{ secrets.SSH_KEY }}
+          remote_port: ${{ secrets.SSH_PORT }}
+
+      - name: Install prod deps & restart service
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            cd /opt/discord-bot
+            npm ci --omit=dev
+            sudo systemctl enable discord-bot || true
+            sudo systemctl restart discord-bot
+            sudo systemctl status -n 20 discord-bot || true
